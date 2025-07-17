@@ -3,28 +3,28 @@ import pandas as pd
 import json
 import io
 import datetime
+import re
 
 st.set_page_config(page_title="公司&債券評價全功能工具", layout="wide")
-st.title("公司&債券評價全功能工具 (上市/未上市/創投/資產/債券/OTC/市場/特殊)")
+st.title("公司&債券評價全功能工具 (上市/未上市/創投/資產/債券/市場/特殊)")
 
-# 管理員密碼
 ADMIN_PASSWORD = "tbb1840"
 
-# ==== 欄位（含所有債券/OTC特殊用）====
+# ====== 欄位、公式、評價方法（預設）======
 default_fields = [
     {"name": "股價", "key": "stock_price"},
     {"name": "流通股數", "key": "shares"},
     {"name": "EPS（每股盈餘）", "key": "eps"},
     {"name": "淨利（Net Income）", "key": "net_income"},
     {"name": "本益比（PE倍數）", "key": "pe_ratio"},
-    {"name": "每股淨值（BVPS）", "key": "bvps"},
+    {"name": "每股帳面價值", "key": "bvps"},
     {"name": "股東權益（Equity）", "key": "equity"},
     {"name": "本淨比（PB倍數）", "key": "pb_ratio"},
     {"name": "EBITDA（稅息折舊攤提前獲利）", "key": "ebitda"},
     {"name": "EV/EBITDA倍數", "key": "ev_ebitda_ratio"},
     {"name": "現金（Cash）", "key": "cash"},
     {"name": "有息負債（Debt）", "key": "debt"},
-    {"name": "併購價格/案例參考（Precedent Transaction Price）", "key": "precedent_price"},
+    {"name": "併購價格/案例參考", "key": "precedent_price"},
     # DCF
     {"name": "FCF_1（第1年自由現金流）", "key": "fcf1"},
     {"name": "FCF_2（第2年自由現金流）", "key": "fcf2"},
@@ -71,16 +71,12 @@ default_fields = [
     {"name": "每年付息次數", "key": "bond_coupon_freq"},
     {"name": "到期年數", "key": "bond_years"},
     {"name": "市場折現率（YTM, %）", "key": "bond_ytm"},
-    # OTC/複雜債券專用
-    {"name": "債券提前贖回年數", "key": "bond_call_years"},
-    {"name": "債券提前賣回年數", "key": "bond_put_years"},
-    {"name": "每期還本金額清單（逗號分隔）", "key": "bond_principal_list"},
-    {"name": "浮動利率（%）", "key": "bond_floating_rate"},
-    {"name": "OTC 債券說明", "key": "otc_bond_info"},
+    # 互斥防呆專用
+    {"name": "每股營收", "key": "sales_per_share"},
+    {"name": "營收總額", "key": "sales_total"},
 ]
 
 default_formulas = {
-    # 公司/股票/創投
     "market_price": "stock_price * shares if stock_price and shares else None",
     "pe_comp": "pe_ratio * net_income if pe_ratio and net_income else None",
     "pb_comp": "pb_ratio * equity if pb_ratio and equity else None",
@@ -100,22 +96,12 @@ default_formulas = {
     "real_option": "None",
     "sotp": "sum([sub_value1, sub_value2, sub_value3]) if all(x is not None for x in [sub_value1, sub_value2, sub_value3]) else None",
     "custom_industry": "custom_metric if custom_metric else None",
-    # 債券/OTC全功能
     "bond_pv": "(sum([bond_face_value * bond_coupon_rate / bond_coupon_freq / 100 / (1 + bond_ytm/100/bond_coupon_freq) ** (i+1) for i in range(int(bond_years * bond_coupon_freq))]) + bond_face_value / (1 + bond_ytm/100/bond_coupon_freq) ** (bond_years * bond_coupon_freq)) if all(x is not None for x in [bond_face_value, bond_coupon_rate, bond_coupon_freq, bond_ytm, bond_years]) else None",
     "bond_current_yield": "(bond_face_value * bond_coupon_rate / 100) / bond_market_price if bond_face_value and bond_coupon_rate and bond_market_price else None",
     "bond_par_value": "bond_face_value if bond_face_value else None",
-    "bond_redemption_value": "bond_face_value if bond_face_value else None",
-    # ==== YTM IRR自動解（需scipy）====
-    "bond_ytm_calc": "(lambda: __import__('scipy.optimize').optimize.newton(lambda y: sum([(bond_face_value * bond_coupon_rate / bond_coupon_freq / 100) / (1 + y/bond_coupon_freq) ** (i+1) for i in range(int(bond_years * bond_coupon_freq))]) + bond_face_value / (1 + y/bond_coupon_freq) ** (bond_years * bond_coupon_freq) - bond_market_price, 0.05))() if all(x is not None for x in [bond_face_value, bond_coupon_rate, bond_coupon_freq, bond_years, bond_market_price]) else None",
-    # ==== 提前贖回/賣回殖利率 ====
-    "bond_ytc": "(lambda: __import__('scipy.optimize').optimize.newton(lambda y: sum([(bond_face_value * bond_coupon_rate / bond_coupon_freq / 100) / (1 + y/bond_coupon_freq) ** (i+1) for i in range(int(bond_call_years * bond_coupon_freq))]) + bond_face_value / (1 + y/bond_coupon_freq) ** (bond_call_years * bond_coupon_freq) - bond_market_price, 0.05))() if all(x is not None for x in [bond_face_value, bond_coupon_rate, bond_coupon_freq, bond_call_years, bond_market_price]) else None",
-    "bond_ytp": "(lambda: __import__('scipy.optimize').optimize.newton(lambda y: sum([(bond_face_value * bond_coupon_rate / bond_coupon_freq / 100) / (1 + y/bond_coupon_freq) ** (i+1) for i in range(int(bond_put_years * bond_coupon_freq))]) + bond_face_value / (1 + y/bond_coupon_freq) ** (bond_put_years * bond_coupon_freq) - bond_market_price, 0.05))() if all(x is not None for x in [bond_face_value, bond_coupon_rate, bond_coupon_freq, bond_put_years, bond_market_price]) else None",
-    # ==== 浮動利率現值 ====
-    "bond_floating_price": "(sum([bond_face_value * bond_floating_rate / bond_coupon_freq / 100 / (1 + bond_ytm/100/bond_coupon_freq) ** (i+1) for i in range(int(bond_years * bond_coupon_freq))]) + bond_face_value / (1 + bond_ytm/100/bond_coupon_freq) ** (bond_years * bond_coupon_freq)) if all(x is not None for x in [bond_face_value, bond_floating_rate, bond_coupon_freq, bond_ytm, bond_years]) else None",
-    # ==== 分段還本債 ====
-    "bond_amortizing_price": "(sum([float(b)/((1+bond_ytm/100/bond_coupon_freq)**(i+1)) for i, b in enumerate(bond_principal_list.split(','))]) if bond_principal_list and bond_ytm and bond_coupon_freq else None)",
-    # ==== OTC 說明 ====
-    "otc_bond_info": "'OTC債券評價方法與一般債券完全一致，但資訊揭露/流動性須額外考慮（可於評價報告註明）'",
+    "bond_ytm_info": "'到期殖利率(YTM)為使債券現值等於市價時的折現率，通常需用專業計算器或Excel IRR求解' ",
+    # 銜接互斥：自動用其中一欄推算總額
+    "sales_total_autofill": "sales_per_share * shares if sales_per_share and shares and not sales_total else sales_total if sales_total else None",
 }
 
 default_methods = [
@@ -138,17 +124,13 @@ default_methods = [
     {"name": "選擇權定價法", "key": "real_option"},
     {"name": "分段混合法SOTP", "key": "sotp"},
     {"name": "行業自定指標", "key": "custom_industry"},
-    # 債券/OTC
+    # 債券
     {"name": "債券現值法（DCF）", "key": "bond_pv"},
     {"name": "當期殖利率法", "key": "bond_current_yield"},
     {"name": "平價法", "key": "bond_par_value"},
-    {"name": "到期金額法", "key": "bond_redemption_value"},
-    {"name": "到期殖利率自動解（YTM）", "key": "bond_ytm_calc"},
-    {"name": "提前贖回殖利率（YTC）", "key": "bond_ytc"},
-    {"name": "提前賣回殖利率（YTP）", "key": "bond_ytp"},
-    {"name": "浮動利率債現值", "key": "bond_floating_price"},
-    {"name": "分段還本債現值", "key": "bond_amortizing_price"},
-    {"name": "OTC債券說明", "key": "otc_bond_info"},
+    {"name": "YTM說明", "key": "bond_ytm_info"},
+    # 新增：營收總額自動計算結果也展示
+    {"name": "營收總額(自動計算)", "key": "sales_total_autofill"},
 ]
 
 if "fields" not in st.session_state:
@@ -168,8 +150,7 @@ def safe_float(val):
     except:
         return None
 
-v = {f['key']: safe_float(st.session_state.inputs.get(f['key'], "")) for f in st.session_state.fields}
-
+# ====== 側邊欄資料輸入 ======
 st.sidebar.header("請輸入公司或債券評價資料")
 for f in st.session_state.fields:
     val = st.sidebar.text_input(
@@ -179,27 +160,68 @@ for f in st.session_state.fields:
     )
     st.session_state.inputs[f['key']] = val
 
-results = {}
-for m in st.session_state.methods:
-    key = m["key"]
-    formula = st.session_state.formulas.get(key, "None")
+# ====== 互斥防呆提醒（每股營收vs營收總額）======
+if (st.session_state.inputs.get("sales_per_share") and st.session_state.inputs.get("sales_total")):
+    st.warning("⚠️ 請勿同時填寫『每股營收』與『營收總額』，僅需擇一輸入！如都填將以『營收總額』為主計算。")
+elif (st.session_state.inputs.get("sales_per_share") and st.session_state.inputs.get("shares")):
     try:
-        results[m['name']] = eval(formula, {}, v)
-    except Exception as e:
-        results[m['name']] = None
+        auto_sales_total = float(st.session_state.inputs["sales_per_share"]) * float(st.session_state.inputs["shares"])
+        st.info(f"自動計算營收總額：{auto_sales_total:,.0f}（僅供參考，如已填『營收總額』則以輸入值為主）")
+    except:
+        pass
+
+# ====== 公式依賴遞推 ======
+def parse_variables(expr):
+    reserved = set(['if', 'else', 'None', 'sum', 'lambda', 'range', 'float', 'int', 'str', 'for', 'in', 'True', 'False'])
+    found = set(re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', expr))
+    return found - reserved
+
+v = {f['key']: safe_float(st.session_state.inputs.get(f['key'], "")) for f in st.session_state.fields}
+
+formulas = st.session_state.formulas.copy()
+dependencies = {k: parse_variables(expr) for k, expr in formulas.items()}
+
+def topo_evaluate(formulas, v):
+    result = v.copy()
+    pending = set(formulas.keys())
+    error_msgs = {}
+    max_iter = len(formulas) + 5
+    iter_count = 0
+    while pending and iter_count < max_iter:
+        for k in list(pending):
+            if dependencies[k] <= set(result.keys()):
+                try:
+                    result[k] = eval(formulas[k], {}, result)
+                except Exception as e:
+                    result[k] = None
+                    error_msgs[k] = f"公式錯誤：{str(e)}"
+                pending.remove(k)
+        iter_count += 1
+    for k in pending:
+        error_msgs[k] = "欄位依賴未解決（可能有循環或公式錯誤/不存在欄位）"
+        result[k] = None
+    return result, error_msgs
+
+results, error_msgs = topo_evaluate(formulas, v)
 
 st.header("公司與債券評價方法總覽")
 df = pd.DataFrame([
-    {"評價方法": k, "估值（元/比率/說明）": (f"{val:,.4f}" if isinstance(val, float) and val is not None else val if val is not None else "")}
-    for k, val in results.items()
+    {"評價方法": m["name"], "估值（元/比率/說明）": (f"{results[m['key']]:,.4f}" if isinstance(results[m['key']], float) and results[m['key']] is not None else results[m['key']] if results[m['key']] is not None else "")}
+    for m in st.session_state.methods
 ])
 st.table(df)
 
+if error_msgs and st.session_state.admin_mode:
+    st.error("⚠️ 有公式錯誤或依賴問題如下：")
+    for k, msg in error_msgs.items():
+        st.write(f"【{k}】：{msg}")
+
+# ====== 匯出 Excel ======
 st.header("匯出 Excel")
 if st.button("匯出Excel"):
     df_input = pd.DataFrame([(f['name'], st.session_state.inputs.get(f['key'], "")) for f in st.session_state.fields], columns=["項目", "輸入值"])
     df_out = pd.DataFrame([
-        (k, (f"{val:,.4f}" if isinstance(val, float) and val is not None else val if val is not None else "")) for k, val in results.items()
+        (m['name'], (f"{results[m['key']]:,.4f}" if isinstance(results[m['key']], float) and results[m['key']] is not None else results[m['key']] if results[m['key']] is not None else "")) for m in st.session_state.methods
     ], columns=["評價方法", "估值（元/比率/說明）"])
     with pd.ExcelWriter("公司債券評價結果.xlsx", engine="openpyxl") as writer:
         df_input.to_excel(writer, sheet_name="輸入數據", index=False)
@@ -207,6 +229,7 @@ if st.button("匯出Excel"):
     with open("公司債券評價結果.xlsx", "rb") as file:
         st.download_button("下載Excel", file, file_name="公司債券評價結果.xlsx")
 
+# ====== 一鍵清除 ======
 if st.button("一鍵清除"):
     st.session_state.inputs = {f['key']: "" for f in st.session_state.fields}
     st.rerun()
@@ -240,6 +263,7 @@ with st.expander("管理員功能（欄位/公式/匯出/還原）", expanded=Fa
             file_name=f"公式清單_{now_str}.json",
             mime="application/json"
         )
+        # 欄位管理
         st.subheader("欄位管理")
         st.table(pd.DataFrame(st.session_state.fields))
         new_name = st.text_input("新增欄位中文名稱", key="addfield_name")
@@ -259,6 +283,7 @@ with st.expander("管理員功能（欄位/公式/匯出/還原）", expanded=Fa
                 st.error("此英文key已存在，請換一個。")
             else:
                 st.error("欄位名稱與key皆需填寫。")
+        # 刪除欄位
         del_options = [f"{f['name']} ({f['key']})" for f in st.session_state.fields]
         del_choice = st.selectbox("選擇要刪除的欄位", del_options, key="del_field_choice")
         if st.button("刪除選定欄位"):
@@ -269,6 +294,7 @@ with st.expander("管理員功能（欄位/公式/匯出/還原）", expanded=Fa
                 st.session_state.formulas.pop(del_key)
             st.success("已刪除欄位（並同步移除對應公式）")
             st.rerun()
+        # 匯出/還原
         st.markdown("### 欄位與公式設定匯出/還原")
         if st.button("手動匯出欄位清單"):
             st.download_button("下載欄位清單.json", io.BytesIO(field_json.encode("utf-8")), file_name="欄位清單.json")
@@ -301,6 +327,7 @@ with st.expander("管理員功能（欄位/公式/匯出/還原）", expanded=Fa
                     st.error("格式錯誤")
             except Exception as e:
                 st.error(f"上傳錯誤：{e}")
+        # 公式即時編輯
         st.markdown("---")
         st.subheader("公式管理（可即時修改）")
         for k in st.session_state.formulas:
