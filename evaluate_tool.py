@@ -345,7 +345,8 @@ def run_comprehensive_valuation_app():
     st.header("公司&債券評價全功能工具 (專業版)")
     st.markdown("---")
 
-    ADMIN_PASSWORD = "tbb1840"
+    # 將管理員密碼改為 TBB1840 (大寫)
+    ADMIN_PASSWORD = "TBB1840"
 
     # ====== 預設欄位、公式、評價方法 ======
     default_fields = [
@@ -416,7 +417,7 @@ def run_comprehensive_valuation_app():
         "bond_par_value": "bond_face_value if bond_face_value else None",
         "bond_ytm_info": "'到期殖利率(YTM)為使債券現值等於市價時的折現率，通常需用專業計算器或Excel IRR求解'",
         "sales_total_autofill": "sales_per_share * shares if sales_per_share and shares and not sales_total else sales_total if sales_total else None",
-    }
+    ]
 
     default_methods = [
         {"name": "市價法", "key": "market_price"}, {"name": "同業PE倍數法", "key": "pe_comp"},
@@ -554,14 +555,17 @@ def run_comprehensive_valuation_app():
     # ====== 管理員功能 ======
     with st.expander("管理員功能（欄位/公式/匯出/還原）", expanded=False):
         if not st.session_state.comp_admin_mode:
-            pwd = st.text_input("請輸入管理密碼", type="password", key="comp_admin_pwd")
-            # 新增一個按鈕來觸發密碼驗證和頁面重新執行
-            if st.button("登入管理員模式", key="comp_admin_login_button"):
-                if pwd == ADMIN_PASSWORD:
-                    st.session_state.comp_admin_mode = True
-                    st.rerun()
-                else:
-                    st.error("密碼錯誤，請重新輸入。")
+            # 使用 st.form 來實現按 Enter 登入
+            with st.form(key="admin_login_form"):
+                pwd = st.text_input("請輸入管理密碼", type="password", key="comp_admin_pwd")
+                submitted = st.form_submit_button("登入管理員模式")
+
+                if submitted:
+                    if pwd == ADMIN_PASSWORD:
+                        st.session_state.comp_admin_mode = True
+                        st.rerun()
+                    else:
+                        st.error("密碼錯誤，請重新輸入。")
         else:
             st.success("管理員已登入。")
             if st.button("登出管理員模式", key="comp_admin_logout"):
