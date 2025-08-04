@@ -7,6 +7,7 @@ from datetime import datetime # Although imported, not directly used in the prov
 import matplotlib.pyplot as plt
 import requests
 from bs4 import BeautifulSoup
+import io # Import io module for handling in-memory text files
 
 # 設定 Streamlit 頁面配置
 st.set_page_config(page_title="股票估值工具 V2", layout="wide")
@@ -52,15 +53,17 @@ def load_stock_list():
             rows = table.find_all('tr')
             data_rows = []
             
-            # 跳過表頭，從第二行開始提取數據
-            for row in rows[1:]: 
-                cols = row.find_all('td')
-                # 確保有足夠的欄位，例如公司代號和公司名稱
-                if len(cols) >= 2: 
-                    # 提取公司代號和公司名稱的文本
-                    stock_id = cols[0].get_text(strip=True)
-                    company_name = cols[1].get_text(strip=True)
-                    data_rows.append([stock_id, company_name])
+            # 檢查是否有足夠的行，至少包含表頭和一行數據
+            if len(rows) > 1:
+                # 跳過表頭，從第二行開始提取數據
+                for row in rows[1:]: 
+                    cols = row.find_all('td')
+                    # 確保有足夠的欄位，例如公司代號和公司名稱
+                    if len(cols) >= 2: 
+                        # 提取公司代號和公司名稱的文本
+                        stock_id = cols[0].get_text(strip=True)
+                        company_name = cols[1].get_text(strip=True)
+                        data_rows.append([stock_id, company_name])
             
             if data_rows:
                 taiwan_df = pd.DataFrame(data_rows, columns=["股票代號", "公司名稱"])
@@ -77,8 +80,12 @@ def load_stock_list():
     # 載入美國股票列表 (S&P 500 成分股)
     us_df = pd.DataFrame() # 初始化空的 DataFrame
     try:
-        # 移除 'timeout' 參數，因為 pd.read_csv 不支援
-        us_df = pd.read_csv("https://raw.githubusercontent.com/datasets/s-and-p-500-companies/master/data/constituents.csv")
+        us_url = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/master/data/constituents.csv"
+        # 使用 requests.get 獲取 CSV 內容，並設定 timeout
+        us_response = requests.get(us_url, timeout=10)
+        us_response.raise_for_status() # 如果請求失敗 (例如 4xx 或 5xx 狀態碼)，則引發 HTTPError
+        # 將獲取的文本內容傳遞給 io.StringIO，然後由 pd.read_csv 讀取
+        us_df = pd.read_csv(io.StringIO(us_response.text))
     except requests.exceptions.RequestException as e:
         st.error(f"載入美股列表時發生網路錯誤: {e}")
     except Exception as e:
@@ -127,15 +134,22 @@ def get_dividends_tw(stock_id):
         # 尋找包含股利政策的表格，根據其 class 屬性
         table = soup.find("table", class_="b1 p4_2 r10 box_shadow")
         if table:
-            df = pd.read_html(str(table))[0] # 解析表格
-            df.columns = df.columns.droplevel(0) # 移除多層索引
-            # 重新命名欄位以方便使用
-            df = df.rename(columns={"年度": "Year", "現金股利": "Cash", "股票股利": "Stock"})
-            df = df[["Year", "Cash", "Stock"]].dropna() # 選取並移除空值
-            df = df.head(3) # 只取最近三年的資料
-            # 將 '--' 替換為 0 並轉換為浮點數
-            df[["Cash", "Stock"]] = df[["Cash", "Stock"]].replace("--", 0).astype(float)
-            div_df = df
+            # 使用 pandas.read_html 從找到的表格 HTML 內容中解析
+            # 由於 Goodinfo! 的表格結構可能包含多個子表格，read_html 會返回一個列表
+            # 我們需要找到正確的那個，通常是第一個
+            dfs_from_html = pd.read_html(str(table))
+            if dfs_from_html:
+                df = dfs_from_html[0] # 取第一個表格
+                df.columns = df.columns.droplevel(0) # 移除多層索引
+                # 重新命名欄位以方便使用
+                df = df.rename(columns={"年度": "Year", "現金股利": "Cash", "股票股利": "Stock"})
+                df = df[["Year", "Cash", "Stock"]].dropna() # 選取並移除空值
+                df = df.head(3) # 只取最近三年的資料
+                # 將 '--' 替換為 0 並轉換為浮點數
+                df[["Cash", "Stock"]] = df[["Cash", "Stock"]].replace("--", 0).astype(float)
+                div_df = df
+            else:
+                st.warning(f"從 Goodinfo! 取得 {stock_id} 的股利資料，但未找到有效的表格數據。")
         else:
             st.warning(f"無法從 Goodinfo! 取得 {stock_id} 的股利資料，可能網站結構已改變或無資料。")
     except requests.exceptions.RequestException as e:
