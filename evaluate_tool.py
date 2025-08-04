@@ -58,7 +58,7 @@ def load_stock_list():
                 # 跳過表頭，從第二行開始提取數據
                 for row in rows[1:]: 
                     cols = row.find_all('td')
-                    # 確保有足夠的欄位，例如公司代號和公司名稱
+                    # 確保有足夠的欄位，例如公司代號和公司名稱 (通常在第1和第2個 td)
                     if len(cols) >= 2: 
                         # 提取公司代號和公司名稱的文本
                         stock_id = cols[0].get_text(strip=True)
@@ -68,28 +68,41 @@ def load_stock_list():
             if data_rows:
                 taiwan_df = pd.DataFrame(data_rows, columns=["股票代號", "公司名稱"])
             else:
-                st.warning("從公開資訊觀測站取得台股資料，但未找到有效的股票數據。")
+                st.warning("從公開資訊觀測站取得台股資料，但未找到有效的股票數據。這可能是網站結構改變或無資料。")
         else:
-            st.warning("無法從公開資訊觀測站取得台股資料，請檢查網站結構或稍後再試。")
+            st.warning("無法從公開資訊觀測站取得台股資料的表格。這可能是網站結構改變或網路問題。")
             
     except requests.exceptions.RequestException as e:
-        st.error(f"載入台股列表時發生網路錯誤: {e}")
+        st.error(f"載入台股列表時發生網路錯誤: {e}。請檢查您的網路連線或稍後再試。")
     except Exception as e:
-        st.error(f"載入台股列表時發生解析錯誤: {e}")
+        st.error(f"載入台股列表時發生解析錯誤: {e}。這可能是網站結構改變導致。")
 
     # 載入美國股票列表 (S&P 500 成分股)
-    us_df = pd.DataFrame() # 初始化空的 DataFrame
+    # 初始化 us_df，確保即使載入失敗也有預期的欄位
+    us_df = pd.DataFrame(columns=["Symbol", "Name"]) 
     try:
         us_url = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/master/data/constituents.csv"
         # 使用 requests.get 獲取 CSV 內容，並設定 timeout
         us_response = requests.get(us_url, timeout=10)
         us_response.raise_for_status() # 如果請求失敗 (例如 4xx 或 5xx 狀態碼)，則引發 HTTPError
-        # 將獲取的文本內容傳遞給 io.StringIO，然後由 pd.read_csv 讀取
-        us_df = pd.read_csv(io.StringIO(us_response.text))
+        
+        # 檢查內容是否為空或只有空白字元
+        if us_response.text.strip(): 
+            temp_us_df = pd.read_csv(io.StringIO(us_response.text))
+            # 驗證 DataFrame 是否包含預期的 'Symbol' 和 'Name' 欄位
+            if all(col in temp_us_df.columns for col in ["Symbol", "Name"]):
+                us_df = temp_us_df
+            else:
+                st.warning("載入美股列表成功，但缺少預期的 'Symbol' 或 'Name' 欄位。這可能是 CSV 檔案格式改變。")
+        else:
+            st.warning("從 GitHub 載入美股列表時，接收到的內容為空。")
+
     except requests.exceptions.RequestException as e:
-        st.error(f"載入美股列表時發生網路錯誤: {e}")
+        st.error(f"載入美股列表時發生網路錯誤: {e}。請檢查您的網路連線或稍後再試。")
+    except pd.errors.EmptyDataError: # 處理 CSV 檔案為空但格式有效的情況
+        st.warning("載入美股列表成功，但 CSV 檔案為空。")
     except Exception as e:
-        st.error(f"載入美股列表時發生解析錯誤: {e}")
+        st.error(f"載入美股列表時發生解析錯誤: {e}。這可能是 CSV 檔案格式改變。")
         
     return taiwan_df, us_df
 
@@ -101,6 +114,7 @@ def search_symbol(keyword, market):
     if market == "台股":
         df = tw
         if df.empty:
+            st.info("台股列表資料未載入，無法搜尋。")
             return pd.DataFrame(columns=["股票代號", "公司名稱"]) # 如果資料為空，回傳空 DataFrame
         
         # 檢查關鍵字是否為數字，並據此搜尋股票代號或公司名稱
@@ -114,6 +128,7 @@ def search_symbol(keyword, market):
     else: # 美股
         df = us
         if df.empty:
+            st.info("美股列表資料未載入，無法搜尋。")
             return pd.DataFrame(columns=["Symbol", "Name"]) # 如果資料為空，回傳空 DataFrame
 
         # 搜尋美股的名稱或代號
@@ -149,13 +164,13 @@ def get_dividends_tw(stock_id):
                 df[["Cash", "Stock"]] = df[["Cash", "Stock"]].replace("--", 0).astype(float)
                 div_df = df
             else:
-                st.warning(f"從 Goodinfo! 取得 {stock_id} 的股利資料，但未找到有效的表格數據。")
+                st.warning(f"從 Goodinfo! 取得 {stock_id} 的股利資料，但未找到有效的表格數據。這可能是網站結構改變。")
         else:
-            st.warning(f"無法從 Goodinfo! 取得 {stock_id} 的股利資料，可能網站結構已改變或無資料。")
+            st.warning(f"無法從 Goodinfo! 取得 {stock_id} 的股利資料表格。這可能是網站結構改變或無資料。")
     except requests.exceptions.RequestException as e:
-        st.error(f"取得股利資料時發生網路錯誤: {e}")
+        st.error(f"取得股利資料時發生網路錯誤: {e}。請檢查您的網路連線或稍後再試。")
     except Exception as e:
-        st.error(f"解析股利資料時發生錯誤: {e}")
+        st.error(f"解析股利資料時發生錯誤: {e}。這可能是網站結構改變。")
     return div_df
 
 def show_dividend_chart(div_df):
