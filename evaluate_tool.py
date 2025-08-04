@@ -18,7 +18,7 @@ def load_stock_list():
     """
     載入台灣和美國的股票列表。
     台灣股票資料從公開資訊觀測站 (MOPS) 取得，需要發送 POST 請求並解析 HTML。
-    美國股票資料從 GitHub 上的 S&P 500 成分股列表取得。
+    美國股票資料從維基百科上的 S&P 500 成分股列表取得 (更穩定)。
     """
     # 載入台灣股票列表
     url_tw = "https://mops.twse.com.tw/mops/web/ajax_t51sb01"
@@ -44,32 +44,31 @@ def load_stock_list():
         response.encoding = 'utf-8' # 確保正確的編碼
         
         soup = BeautifulSoup(response.text, 'html.parser')
-        # 尋找包含股票列表的表格
-        # 根據公開資訊觀測站的HTML結構，表格通常在 <table class="hasBorder"> 裡面
-        table = soup.find('table', class_='hasBorder') 
+        # 尋找所有表格，嘗試找出包含股票列表的表格
+        # 這裡不再限定 class='hasBorder'，而是遍歷所有表格並檢查其內容
+        tables = soup.find_all('table') 
         
-        if table:
-            # 從表格中提取所有行
+        found_table = False
+        for table in tables:
             rows = table.find_all('tr')
-            data_rows = []
-            
-            # 檢查是否有足夠的行，至少包含表頭和一行數據
-            if len(rows) > 1:
-                # 跳過表頭，從第二行開始提取數據
-                for row in rows[1:]: 
-                    cols = row.find_all('td')
-                    # 確保有足夠的欄位，例如公司代號和公司名稱 (通常在第1和第2個 td)
-                    if len(cols) >= 2: 
-                        # 提取公司代號和公司名稱的文本
-                        stock_id = cols[0].get_text(strip=True)
-                        company_name = cols[1].get_text(strip=True)
-                        data_rows.append([stock_id, company_name])
-            
-            if data_rows:
-                taiwan_df = pd.DataFrame(data_rows, columns=["股票代號", "公司名稱"])
-            else:
-                st.warning("從公開資訊觀測站取得台股資料，但未找到有效的股票數據。這可能是網站結構改變或無資料。")
-        else:
+            if len(rows) > 1: # 至少有表頭和一行數據
+                # 檢查第一行（表頭）是否包含 '公司代號' 和 '公司名稱'
+                header_cols = [th.get_text(strip=True) for th in rows[0].find_all(['th', 'td'])]
+                if '公司代號' in header_cols and '公司名稱' in header_cols:
+                    data_rows = []
+                    for row in rows[1:]: 
+                        cols = row.find_all('td')
+                        if len(cols) >= 2: 
+                            stock_id = cols[0].get_text(strip=True)
+                            company_name = cols[1].get_text(strip=True)
+                            data_rows.append([stock_id, company_name])
+                    
+                    if data_rows:
+                        taiwan_df = pd.DataFrame(data_rows, columns=["股票代號", "公司名稱"])
+                        found_table = True
+                        break # 找到並處理完畢，跳出迴圈
+        
+        if not found_table:
             st.warning("無法從公開資訊觀測站取得台股資料的表格。這可能是網站結構改變或網路問題。")
             
     except requests.exceptions.RequestException as e:
@@ -78,31 +77,28 @@ def load_stock_list():
         st.error(f"載入台股列表時發生解析錯誤: {e}。這可能是網站結構改變導致。")
 
     # 載入美國股票列表 (S&P 500 成分股)
-    # 初始化 us_df，確保即使載入失敗也有預期的欄位
+    # 這裡改用維基百科的表格，通常更穩定
     us_df = pd.DataFrame(columns=["Symbol", "Name"]) 
     try:
-        us_url = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/master/data/constituents.csv"
-        # 使用 requests.get 獲取 CSV 內容，並設定 timeout
-        us_response = requests.get(us_url, timeout=10)
-        us_response.raise_for_status() # 如果請求失敗 (例如 4xx 或 5xx 狀態碼)，則引發 HTTPError
-        
-        # 檢查內容是否為空或只有空白字元
-        if us_response.text.strip(): 
-            temp_us_df = pd.read_csv(io.StringIO(us_response.text))
-            # 驗證 DataFrame 是否包含預期的 'Symbol' 和 'Name' 欄位
-            if all(col in temp_us_df.columns for col in ["Symbol", "Name"]):
-                us_df = temp_us_df
+        us_url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+        # 使用 pandas.read_html 直接讀取網頁中的表格
+        # 通常 S&P 500 成分股列表是網頁中的第一個表格
+        tables = pd.read_html(us_url)
+        if tables:
+            temp_us_df = tables[0] # 假設第一個表格就是 S&P 500 成分股列表
+            # 驗證 DataFrame 是否包含預期的 'Symbol' 和 'Security' (公司名稱) 欄位
+            if 'Symbol' in temp_us_df.columns and 'Security' in temp_us_df.columns:
+                us_df = temp_us_df.rename(columns={'Security': 'Name'}) # 將 'Security' 更名為 'Name'
+                us_df = us_df[['Symbol', 'Name']] # 只保留需要的欄位
             else:
-                st.warning("載入美股列表成功，但缺少預期的 'Symbol' 或 'Name' 欄位。這可能是 CSV 檔案格式改變。")
+                st.warning("載入美股列表成功，但缺少預期的 'Symbol' 或 'Security' 欄位。這可能是維基百科表格格式改變。")
         else:
-            st.warning("從 GitHub 載入美股列表時，接收到的內容為空。")
+            st.warning("從維基百科載入美股列表時，未找到任何表格。")
 
     except requests.exceptions.RequestException as e:
         st.error(f"載入美股列表時發生網路錯誤: {e}。請檢查您的網路連線或稍後再試。")
-    except pd.errors.EmptyDataError: # 處理 CSV 檔案為空但格式有效的情況
-        st.warning("載入美股列表成功，但 CSV 檔案為空。")
     except Exception as e:
-        st.error(f"載入美股列表時發生解析錯誤: {e}。這可能是 CSV 檔案格式改變。")
+        st.error(f"載入美股列表時發生解析錯誤: {e}。這可能是維基百科表格結構改變。")
         
     return taiwan_df, us_df
 
