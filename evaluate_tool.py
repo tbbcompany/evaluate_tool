@@ -4,9 +4,6 @@ import numpy as np
 import yfinance as yf
 import webbrowser
 from datetime import datetime
-nce as yf
-import webbrowser
-from datetime import datetime
 import matplotlib.pyplot as plt
 import requests
 from bs4 import BeautifulSoup
