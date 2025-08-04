@@ -198,14 +198,27 @@ def run_stock_valuation_app():
                 st.write(f"目前價格：{info.get('currentPrice', '-')}")
                 st.write(f"EPS：{info.get('trailingEps', '-')}")
                 st.write(f"本益比 PE：{info.get('trailingPE', '-')}")
+                # 新增：目前股息殖利率
+                dividend_yield = info.get('dividendYield')
+                if dividend_yield is not None:
+                    st.write(f"目前股息殖利率：{dividend_yield * 100:.2f}%")
+                else:
+                    st.write(f"目前股息殖利率：-")
             with col2:
                 st.write(f"每股淨值 BVPS：約 {info.get('bookValue', '-')}")
                 st.write(f"股價淨值比 PB：約 {info.get('priceToBook', '-')}")
+                # 新增：本益成長比 (PEG Ratio)
+                peg_ratio = info.get('pegRatio')
+                if peg_ratio is not None:
+                    st.write(f"本益成長比 PEG：{peg_ratio:.2f}")
+                else:
+                    st.write(f"本益成長比 PEG：-")
+
 
             if market == "台股":
                 div_df = get_dividends_tw(code)
                 if not div_df.empty:
-                    with col1:
+                    with col1: # 這裡可以考慮調整排版，讓圖表更清晰
                         show_dividend_chart(div_df)
                 else:
                     st.info("台股股利資料可能無法取得或不存在。")
@@ -251,6 +264,60 @@ def run_stock_valuation_app():
                     st.dataframe(df_ps.round(2))
             except Exception as e:
                 st.warning(f"計算 P/S 合理價時發生錯誤: {e}")
+
+            # --- PEG Ratio Valuation (新增) ---
+            st.write("---")
+            st.write("**本益成長比 (PEG Ratio) 估值**")
+            try:
+                peg = info.get("pegRatio")
+                eps = info.get("trailingEps")
+                # 這裡需要一個預期成長率來反推，如果PEG是1，表示PE等於成長率
+                # 簡單起見，我們可以假設一個合理的PEG範圍來估值，例如0.5到1.5
+                # 或者，如果能取得分析師預期成長率，則會更精確
+                # 由於yfinance的info中沒有直接的forward EPS growth，我們使用trailingEps和一個假設的成長率來演示
+                # 更實際的應用會需要更精確的成長率數據
+                
+                if peg is None or eps is None or price is None:
+                    st.info("無法取得完整的 PEG、EPS 或目前價格資料，無法計算 PEG 合理價。")
+                else:
+                    peg = float(peg)
+                    eps = float(eps)
+                    price = float(price)
+
+                    # 為了演示，我們假設一個合理的PEG目標範圍，例如 0.8, 1.0, 1.2
+                    # 這裡的邏輯是：如果我們知道目標PEG和成長率，可以反推PE，再乘以EPS
+                    # 但yfinance的pegRatio已經是計算好的，所以我們直接用它來推算
+                    # 假設合理PEG為1，則合理PE應等於成長率。
+                    # 如果沒有明確的forward growth rate，這裡的估算會比較粗略。
+                    # 我們可以基於當前EPS和一個假設的成長率來推算未來EPS，再結合目標PEG。
+                    # 為了簡化，我們直接用當前PEG作為基準，並給出一個範圍。
+                    
+                    # 假設一個合理的PEG範圍，例如0.8, 1.0, 1.2
+                    # 如果PEG=1，表示PE=成長率。
+                    # 為了從PEG反推價格，我們需要預期成長率。
+                    # yfinance info 中沒有直接的 analystGrowthRate 或 forwardEpsGrowthRate
+                    # 如果有這些數據，計算會更精確。
+                    # 暫時用一個簡化的方法：假設PEG的合理範圍，並基於EPS進行估值
+                    
+                    # 最簡單的PEG估值：合理價格 = EPS * 預期成長率 * 目標PEG
+                    # 但我們只有當前PEG，沒有預期成長率。
+                    # 另一種思路是：合理價格 = 當前價格 / 當前PEG * 目標PEG
+                    # 這會導致如果當前PEG已經很低，估值會更低，可能不是預期的「合理價」
+                    
+                    # 讓我們採用一種常見的簡化方法：
+                    # 合理價格 = (目標PEG / 當前PEG) * 當前價格
+                    # 這種方法假設了市場對成長的評價是線性的，並將當前價格作為基準。
+                    
+                    # 假設目標PEG範圍為 [0.8, 1.0, 1.2]
+                    target_peg_range = [0.8, 1.0, 1.2]
+                    if peg > 0: # 避免除以零
+                        fair_price_peg = (np.array(target_peg_range) / peg) * price
+                        df_peg = pd.DataFrame({"目標PEG": target_peg_range, "估算價格": fair_price_peg, "價差%": (fair_price_peg - price)/price*100})
+                        st.dataframe(df_peg.round(2))
+                    else:
+                        st.info("PEG 為零或負值，無法計算 PEG 合理價。")
+            except Exception as e:
+                st.warning(f"計算 PEG 合理價時發生錯誤: {e}")
 
 
             # --- Classic Value Metrics ---
@@ -357,6 +424,12 @@ def run_comprehensive_valuation_app():
         {"name": "EBITDA（稅息折舊攤提前獲利）", "key": "ebitda"}, {"name": "EV/EBITDA倍數", "key": "ev_ebitda_ratio"},
         {"name": "現金（Cash）", "key": "cash"}, {"name": "有息負債（Debt）", "key": "debt"},
         {"name": "併購價格/案例參考", "key": "precedent_price"},
+        # 新增欄位：預期成長率 (用於 PEG)
+        {"name": "預期成長率（%）", "key": "growth_rate_forward"},
+        # 新增欄位：股價營收比 (P/S)
+        {"name": "股價營收比（P/S 倍數）", "key": "ps_ratio"},
+        # 新增欄位：企業價值/銷售收入比 (EV/Sales)
+        {"name": "企業價值/銷售收入比（EV/Sales 倍數）", "key": "ev_sales_ratio"},
         # DCF
         {"name": "FCF_1（第1年自由現金流）", "key": "fcf1"}, {"name": "FCF_2（第2年自由現金流）", "key": "fcf2"},
         {"name": "FCF_3（第3年自由現金流）", "key": "fcf3"}, {"name": "FCF_4（第4年自由現金流）", "key": "fcf4"},
@@ -398,6 +471,12 @@ def run_comprehensive_valuation_app():
         "pb_comp": "pb_ratio * equity if pb_ratio and equity else None",
         "ev_ebitda_comp": "ev_ebitda_ratio * ebitda + cash - debt if ev_ebitda_ratio and ebitda and cash is not None and debt is not None else None",
         "precedent_trans": "precedent_price if precedent_price else None",
+        # 新增公式：本益成長比 (PEG)
+        "peg_comp": "(peg_ratio * growth_rate_forward / 100 * eps) if peg_ratio and growth_rate_forward is not None and eps else None",
+        # 新增公式：股價營收比 (P/S)
+        "ps_comp": "ps_ratio * sales_total if ps_ratio and sales_total else None",
+        # 新增公式：企業價值/銷售收入比 (EV/Sales)
+        "ev_sales_comp": "ev_sales_ratio * sales_total if ev_sales_ratio and sales_total else None",
         "dcf": "sum([fcf1/(1+discount_rate)**1, fcf2/(1+discount_rate)**2, fcf3/(1+discount_rate)**3, fcf4/(1+discount_rate)**4, fcf5/(1+discount_rate)**5]) + (fcf5*(1+perpetual_growth)/(discount_rate-perpetual_growth))/(1+discount_rate)**5 if all(x is not None for x in [fcf1, fcf2, fcf3, fcf4, fcf5, discount_rate, perpetual_growth]) and (discount_rate > perpetual_growth) else None",
         "eva": "(nopat - capital*cost_of_capital) if nopat and capital and cost_of_capital else None",
         "cap_earnings": "expected_earnings / capitalization_rate if expected_earnings and capitalization_rate else None",
@@ -422,6 +501,12 @@ def run_comprehensive_valuation_app():
     default_methods = [
         {"name": "市價法", "key": "market_price"}, {"name": "同業PE倍數法", "key": "pe_comp"},
         {"name": "同業PB倍數法", "key": "pb_comp"}, {"name": "同業EV/EBITDA", "key": "ev_ebitda_comp"},
+        # 新增方法：本益成長比法 (PEG)
+        {"name": "本益成長比法（PEG）", "key": "peg_comp"},
+        # 新增方法：股價營收比法 (P/S)
+        {"name": "股價營收比法（P/S）", "key": "ps_comp"},
+        # 新增方法：企業價值/銷售收入比法 (EV/Sales)
+        {"name": "企業價值/銷售收入比法（EV/Sales）", "key": "ev_sales_comp"},
         {"name": "併購交易法", "key": "precedent_trans"}, {"name": "DCF現金流折現法", "key": "dcf"},
         {"name": "EVA經濟附加價值法", "key": "eva"}, {"name": "盈餘資本化法", "key": "cap_earnings"},
         {"name": "股利折現法(DDM)", "key": "ddm"}, {"name": "帳面資產法", "key": "book_asset"},
@@ -575,9 +660,6 @@ def run_comprehensive_valuation_app():
             st.markdown("### 欄位與公式管理")
             # 編輯公式
             st.subheader("公式管理（可即時修改）")
-            # 修正第 395 行的括號錯誤
-            # 原始代碼: for k in st.session_state.comp_formulas:{
-            # 修正為: for k in st.session_state.comp_formulas:
             for k in st.session_state.comp_formulas:
                 new_formula = st.text_area(f"{k} 公式", value=st.session_state.comp_formulas[k], key=f"formula_{k}", height=50)
                 st.session_state.comp_formulas[k] = new_formula
