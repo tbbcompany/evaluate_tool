@@ -4,6 +4,9 @@ import numpy as np
 import yfinance as yf
 import webbrowser
 from datetime import datetime
+nce as yf
+import webbrowser
+from datetime import datetime
 import matplotlib.pyplot as plt
 import requests
 from bs4 import BeautifulSoup
@@ -533,26 +536,35 @@ def run_comprehensive_valuation_app():
             st.rerun()
     with col2:
         output = io.BytesIO()
-        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-            df_input = pd.DataFrame([(f['name'], st.session_state.comp_inputs.get(f['key'], "")) for f in st.session_state.comp_fields], columns=["項目", "輸入值"])
-            df_out = df.copy()
-            df_input.to_excel(writer, sheet_name="輸入數據", index=False)
-            df_out.to_excel(writer, sheet_name="評價總表", index=False)
-        
-        st.download_button(
-            label="匯出Excel報告",
-            data=output.getvalue(),
-            file_name="公司債券評價結果.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+        try:
+            with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+                df_input = pd.DataFrame([(f['name'], st.session_state.comp_inputs.get(f['key'], "")) for f in st.session_state.comp_fields], columns=["項目", "輸入值"])
+                df_out = df.copy()
+                df_input.to_excel(writer, sheet_name="輸入數據", index=False)
+                df_out.to_excel(writer, sheet_name="評價總表", index=False)
+            
+            st.download_button(
+                label="匯出Excel報告",
+                data=output.getvalue(),
+                file_name="公司債券評價結果.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        except ImportError:
+            st.error("匯出 Excel 需要 'xlsxwriter' 套件。請執行 `pip install xlsxwriter` 安裝。")
+        except Exception as e:
+            st.error(f"匯出 Excel 時發生錯誤: {e}")
 
     # ====== 管理員功能 ======
     with st.expander("管理員功能（欄位/公式/匯出/還原）", expanded=False):
         if not st.session_state.comp_admin_mode:
             pwd = st.text_input("請輸入管理密碼", type="password", key="comp_admin_pwd")
-            if pwd == ADMIN_PASSWORD:
-                st.session_state.comp_admin_mode = True
-                st.rerun()
+            # 新增一個按鈕來觸發密碼驗證和頁面重新執行
+            if st.button("登入管理員模式", key="comp_admin_login_button"):
+                if pwd == ADMIN_PASSWORD:
+                    st.session_state.comp_admin_mode = True
+                    st.rerun()
+                else:
+                    st.error("密碼錯誤，請重新輸入。")
         else:
             st.success("管理員已登入。")
             if st.button("登出管理員模式", key="comp_admin_logout"):
