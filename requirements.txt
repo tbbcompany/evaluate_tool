@@ -2,4 +2,10 @@ streamlit
 pandas
 openpyxl
 scipy
+streamlit
+pandas
+numpy
+requests
+matplotlib
+openpyxl
 
