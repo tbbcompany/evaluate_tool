@@ -213,7 +213,7 @@ if keyword:
             st.stop() 
 
 
-        st.subheader(f"� {info.get('longName', '未知公司')} 基本資料")
+        st.subheader(f"📊 {info.get('longName', '未知公司')} 基本資料")
         col1, col2 = st.columns(2)
         with col1:
             st.write(f"目前價格：{info.get('currentPrice', '-')}")
@@ -300,4 +300,3 @@ if keyword:
                 st.warning(f"DCF 計算錯誤: {e}")
     else:
         st.info("找不到符合條件的股票，請嘗試其他關鍵字。")
-�
