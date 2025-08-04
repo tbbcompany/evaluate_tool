@@ -6,5 +6,6 @@ numpy
 requests
 matplotlib
 yfinance
+lxml
 
 
