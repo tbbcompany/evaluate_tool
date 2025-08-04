@@ -12,6 +12,8 @@ import json
 import re
 
 # --- 主應用程式設定 ---
+# 備註：此應用程式需要安裝 xlsxwriter 套件才能正常匯出 Excel。
+# 請在您的環境中執行: pip install xlsxwriter
 st.set_page_config(page_title="多功能財務分析工具", layout="wide")
 st.title("📈 多功能財務分析工具")
 
@@ -209,6 +211,8 @@ def run_stock_valuation_app():
                     st.info("台股股利資料可能無法取得或不存在。")
 
             st.subheader("📐 合理價位與價差建議")
+            # --- Price-to-Earnings (P/E) Ratio Valuation ---
+            st.write("**本益比 (P/E Ratio) 估值**")
             try:
                 pe = info.get("trailingPE")
                 eps = info.get("trailingEps")
@@ -227,7 +231,65 @@ def run_stock_valuation_app():
             except Exception as e:
                 st.warning(f"計算 PE 合理價時發生錯誤: {e}")
 
-            st.subheader("🔍 其他估值試算")
+            # --- Price-to-Sales (P/S) Ratio Valuation ---
+            st.write("---")
+            st.write("**股價營收比 (P/S Ratio) 估值**")
+            try:
+                ps = info.get("priceToSalesTrailing12Months")
+                sps = info.get("revenuePerShare")
+                price = info.get("currentPrice")
+
+                if ps is None or sps is None or price is None:
+                    st.info("無法取得完整的 P/S 或 每股營收 資料，無法計算 P/S 合理價。")
+                else:
+                    ps = float(ps)
+                    sps = float(sps)
+                    price = float(price)
+                    ps_range = [ps * 0.8, ps, ps * 1.2]
+                    fair_price_ps = sps * np.array(ps_range)
+                    df_ps = pd.DataFrame({"P/S": ps_range, "估算價格": fair_price_ps, "價差%": (fair_price_ps - price)/price*100})
+                    st.dataframe(df_ps.round(2))
+            except Exception as e:
+                st.warning(f"計算 P/S 合理價時發生錯誤: {e}")
+
+
+            # --- Classic Value Metrics ---
+            st.subheader("經典價值指標")
+            col_g, col_d = st.columns(2)
+
+            # Graham Number
+            with col_g:
+                st.write("**葛拉漢價值 (Graham Number)**")
+                try:
+                    eps = info.get('trailingEps')
+                    bvps = info.get('bookValue')
+                    if eps is not None and bvps is not None and eps > 0 and bvps > 0:
+                        graham_number = np.sqrt(22.5 * eps * bvps)
+                        st.metric(label="葛拉漢數字", value=f"{graham_number:.2f}")
+                        st.caption("衡量合理價的保守指標，適用於穩定獲利公司。")
+                    else:
+                        st.info("EPS 或每股淨值為負或缺失，不適用葛拉漢數字。")
+                except Exception as e:
+                    st.warning(f"計算葛拉漢價值時出錯: {e}")
+
+            # Dividend Yield Valuation
+            with col_d:
+                st.write("**股利回推價值**")
+                try:
+                    div_rate = info.get('dividendRate')
+                    avg_div_yield = info.get('fiveYearAvgDividendYield') # This is in percent, e.g., 2.5 for 2.5%
+
+                    if div_rate is not None and avg_div_yield is not None and avg_div_yield > 0:
+                        fair_value_div = div_rate / (avg_div_yield / 100)
+                        st.metric(label="五年平均股息回推價", value=f"{fair_value_div:.2f}")
+                        st.caption("以五年平均殖利率回推的價值，適用於穩定發放股利的公司。")
+                    else:
+                        st.info("缺少股利或五年平均殖利率資料，不適用此估值法。")
+                except Exception as e:
+                    st.warning(f"計算股利回推價值時出錯: {e}")
+
+
+            st.subheader("🔍 手動估值試算")
             tab1, tab2, tab3 = st.tabs(["PE 法", "PB 法", "DCF (簡版)"])
             
             default_pe = float(info.get("trailingPE", 15.0)) if info.get("trailingPE") else 15.0
@@ -552,13 +614,21 @@ def run_comprehensive_valuation_app():
                 st.rerun()
 
 # --- 主應用程式選擇邏輯 ---
-app_choice = st.sidebar.selectbox(
-    "請選擇工具",
-    ["股票估值工具 (簡易版)", "公司&債券評價工具 (專業版)"],
-    key="main_app_selector"
-)
+# 初始化 session_state
+if 'app_choice' not in st.session_state:
+    st.session_state.app_choice = "股票估值工具 (簡易版)" # 預設顯示簡易版
 
-if app_choice == "股票估值工具 (簡易版)":
+st.sidebar.title("工具選單")
+
+if st.sidebar.button("股票估值工具 (簡易版)", use_container_width=True):
+    st.session_state.app_choice = "股票估值工具 (簡易版)"
+
+if st.sidebar.button("公司&債券評價工具 (專業版)", use_container_width=True):
+    st.session_state.app_choice = "公司&債券評價工具 (專業版)"
+
+
+# 根據選擇顯示對應的應用程式
+if st.session_state.app_choice == "股票估值工具 (簡易版)":
     run_stock_valuation_app()
-elif app_choice == "公司&債券評價工具 (專業版)":
+elif st.session_state.app_choice == "公司&債券評價工具 (專業版)":
     run_comprehensive_valuation_app()
