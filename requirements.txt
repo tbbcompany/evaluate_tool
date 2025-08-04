@@ -8,4 +8,11 @@ numpy
 requests
 matplotlib
 openpyxl
+streamlit
+pandas
+numpy
+requests
+matplotlib
+openpyxl
+yfinance
 
