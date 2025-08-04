@@ -42,17 +42,31 @@ def load_stock_list():
         response = requests.post(url_tw, headers=headers, data=data, timeout=10) # 增加超時設定
         response.encoding = 'utf-8' # 確保正確的編碼
         
-        # 使用 pandas.read_html 從 HTML 內容中解析表格
-        tables = pd.read_html(response.text)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        # 尋找包含股票列表的表格
+        # 根據公開資訊觀測站的HTML結構，表格通常在 <table class="hasBorder"> 裡面
+        table = soup.find('table', class_='hasBorder') 
         
-        # 遍歷所有解析出的表格，尋找包含 '公司代號' 和 '公司名稱' 的表格
-        for table in tables:
-            if '公司代號' in table.columns and '公司名稱' in table.columns:
-                # 選取需要的欄位並重新命名，以符合程式碼中 '股票代號' 的預期
-                taiwan_df = table[['公司代號', '公司名稱']].rename(columns={'公司代號': '股票代號', '公司名稱': '公司名稱'})
-                break
-        
-        if taiwan_df.empty:
+        if table:
+            # 從表格中提取所有行
+            rows = table.find_all('tr')
+            data_rows = []
+            
+            # 跳過表頭，從第二行開始提取數據
+            for row in rows[1:]: 
+                cols = row.find_all('td')
+                # 確保有足夠的欄位，例如公司代號和公司名稱
+                if len(cols) >= 2: 
+                    # 提取公司代號和公司名稱的文本
+                    stock_id = cols[0].get_text(strip=True)
+                    company_name = cols[1].get_text(strip=True)
+                    data_rows.append([stock_id, company_name])
+            
+            if data_rows:
+                taiwan_df = pd.DataFrame(data_rows, columns=["股票代號", "公司名稱"])
+            else:
+                st.warning("從公開資訊觀測站取得台股資料，但未找到有效的股票數據。")
+        else:
             st.warning("無法從公開資訊觀測站取得台股資料，請檢查網站結構或稍後再試。")
             
     except requests.exceptions.RequestException as e:
@@ -63,7 +77,8 @@ def load_stock_list():
     # 載入美國股票列表 (S&P 500 成分股)
     us_df = pd.DataFrame() # 初始化空的 DataFrame
     try:
-        us_df = pd.read_csv("https://raw.githubusercontent.com/datasets/s-and-p-500-companies/master/data/constituents.csv", timeout=10)
+        # 移除 'timeout' 參數，因為 pd.read_csv 不支援
+        us_df = pd.read_csv("https://raw.githubusercontent.com/datasets/s-and-p-500-companies/master/data/constituents.csv")
     except requests.exceptions.RequestException as e:
         st.error(f"載入美股列表時發生網路錯誤: {e}")
     except Exception as e:
