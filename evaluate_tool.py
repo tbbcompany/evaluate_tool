@@ -417,7 +417,7 @@ def run_comprehensive_valuation_app():
         "bond_par_value": "bond_face_value if bond_face_value else None",
         "bond_ytm_info": "'到期殖利率(YTM)為使債券現值等於市價時的折現率，通常需用專業計算器或Excel IRR求解'",
         "sales_total_autofill": "sales_per_share * shares if sales_per_share and shares and not sales_total else sales_total if sales_total else None",
-    ]
+    }
 
     default_methods = [
         {"name": "市價法", "key": "market_price"}, {"name": "同業PE倍數法", "key": "pe_comp"},
@@ -575,6 +575,9 @@ def run_comprehensive_valuation_app():
             st.markdown("### 欄位與公式管理")
             # 編輯公式
             st.subheader("公式管理（可即時修改）")
+            # 修正第 395 行的括號錯誤
+            # 原始代碼: for k in st.session_state.comp_formulas:{
+            # 修正為: for k in st.session_state.comp_formulas:
             for k in st.session_state.comp_formulas:
                 new_formula = st.text_area(f"{k} 公式", value=st.session_state.comp_formulas[k], key=f"formula_{k}", height=50)
                 st.session_state.comp_formulas[k] = new_formula
